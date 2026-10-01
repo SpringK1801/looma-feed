@@ -1,3 +1,11 @@
+import { MediaPicker } from "@/components/looma/MediaPicker";
+import { PostMedia } from "@/components/looma/PostMedia";
+import {
+  uploadPostMedia,
+  removePostMedia,
+  type PreparedMedia,
+  type PostMediaData,
+} from "@/lib/media";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { FileText, MoreHorizontal, Plus, Trash2 } from "lucide-react";
@@ -19,7 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type Post = {
+type Post = PostMediaData & {
   id: string;
   content: string;
   kind: "post" | "work";
@@ -33,6 +41,8 @@ export const Route = createFileRoute("/publicacoes")({ component: PostsPage });
 function PostsPage() {
   const { user } = useCurrentProfile();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [media, setMedia] = useState<PreparedMedia | null>(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const [content, setContent] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -56,7 +66,9 @@ function PostsPage() {
     setError(null);
     const { data, error: queryError } = await getSupabaseBrowserClient()
       .from("posts")
-      .select("id, content, kind, likes_count, comments_count, created_at")
+      .select(
+        "id, content, kind, likes_count, comments_count, created_at, media_path, media_type, media_size, media_duration",
+      )
       .eq("author_id", userId)
       .eq("status", "published")
       .order("created_at", { ascending: false });
@@ -70,19 +82,35 @@ function PostsPage() {
 
   async function createPost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user || !content.trim()) return;
+    if (!user || !content.trim() || saving || mediaBusy) return;
     setSaving(true);
     setActionError(null);
-    const { error: insertError } = await getSupabaseBrowserClient()
-      .from("posts")
-      .insert({ author_id: user.id, content: content.trim(), status: "published" });
-    if (insertError) setActionError(insertError.message);
-    else {
+    let uploadedPath: string | null = null;
+    try {
+      const attachment = await uploadPostMedia(user.id, media);
+      uploadedPath = attachment.media_path;
+      const { error } = await getSupabaseBrowserClient()
+        .from("posts")
+        .insert({
+          author_id: user.id,
+          content: content.trim(),
+          status: "published",
+          ...attachment,
+        });
+      if (error) throw error;
+      uploadedPath = null;
+      setMedia(null);
       setContent("");
       setComposerOpen(false);
       await load();
+    } catch (error) {
+      await removePostMedia(uploadedPath);
+      setActionError(
+        error instanceof Error ? error.message : "Não foi possível publicar. Tente novamente.",
+      );
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   function openPostEditor(post: Post) {
@@ -139,6 +167,7 @@ function PostsPage() {
     if (deleteError) {
       setActionError(deleteError.message);
     } else {
+      await removePostMedia(postPendingDeletion.media_path);
       setPostPendingDeletion(null);
       await load();
     }
@@ -172,9 +201,15 @@ function PostsPage() {
             placeholder="Compartilhe uma ideia, oportunidade ou projeto"
             maxLength={300}
           />
+          <MediaPicker
+            value={media}
+            onChange={setMedia}
+            disabled={saving}
+            onBusyChange={setMediaBusy}
+          />
           <div>
             <span>{content.length}/300</span>
-            <button disabled={saving || !content.trim()}>
+            <button disabled={saving || mediaBusy || !content.trim()}>
               {saving ? "Publicando…" : "Publicar"}
             </button>
           </div>
@@ -250,6 +285,7 @@ function PostsPage() {
                 </div>
               </div>
               <p>{post.content}</p>
+              <PostMedia path={post.media_path} type={post.media_type} />
               <small>
                 {post.likes_count} curtidas · {post.comments_count} comentários
               </small>

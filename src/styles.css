@@ -10842,3 +10842,33 @@ body {
   width: 100%;
   max-width: 100%;
 }
+
+/* Publication attachments */
+.media-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-block: 12px;
+}
+.media-picker label { display: grid; gap: 6px; }
+.media-picker input { max-width: 100%; }
+.media-picker small { opacity: .75; }
+.media-picker button {
+  justify-self: start;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+.media-picker:disabled { opacity: .65; }
+.media-trim { display: grid; gap: 8px; }
+.post-media {
+  display: block;
+  width: 100%;
+  max-height: 440px;
+  object-fit: contain;
+  border-radius: 12px;
+  margin-block: 12px;
+}

@@ -1,3 +1,4 @@
+import { convertPhoto } from "@/lib/media";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Profile } from "@/lib/profile";
@@ -61,28 +62,19 @@ export async function saveProfileDetails({
 
   const supabase = getSupabaseBrowserClient();
   let avatarUrl = profile?.avatar_url ?? null;
+  let uploadedAvatar: string | null = null;
 
   if (avatarFile) {
-    const bucketResponse = await fetch("/api/storage/ensure-avatars", { method: "POST" });
-    if (!bucketResponse.ok) {
-      const body = (await bucketResponse.json().catch(() => null)) as { error?: string } | null;
-      console.error("[Looma] Falha ao preparar o bucket de avatar.", {
-        status: bucketResponse.status,
-        serverError: body?.error ?? null,
-      });
-      if (body?.error === "storage_admin_not_configured") {
-        throw new Error("O upload de avatar ainda não está configurado no servidor.");
-      }
-      throw new Error("Não foi possível preparar o armazenamento de avatar.");
-    }
-
-    const extension = avatarFile.name.split(".").pop()?.toLowerCase() || "jpg";
+    const validationError = getAvatarFileValidationError(avatarFile);
+    if (validationError) throw new Error(validationError);
+    const convertedAvatar = await convertPhoto(avatarFile, MAX_AVATAR_SIZE);
+    const extension = "webp";
     const filePath = `${user.id}/avatar-${Date.now()}.${extension}`;
     const { error: uploadError } = await supabase.storage
-      .from("avatars")
-      .upload(filePath, avatarFile, {
+      .from("profile-media")
+      .upload(filePath, convertedAvatar, {
         cacheControl: "3600",
-        contentType: avatarFile.type,
+        contentType: convertedAvatar.type,
         upsert: false,
       });
     if (uploadError) {
@@ -90,8 +82,8 @@ export async function saveProfileDetails({
       throw new Error("Não foi possível enviar a sua foto. Tente novamente.");
     }
 
-    const { data: publicUrl } = supabase.storage.from("avatars").getPublicUrl(filePath);
-    avatarUrl = publicUrl.publicUrl;
+    uploadedAvatar = filePath;
+    avatarUrl = `storage:profile-media/${filePath}`;
   }
 
   const update = {
@@ -111,6 +103,7 @@ export async function saveProfileDetails({
     .single();
 
   if (error) {
+    if (uploadedAvatar) await supabase.storage.from("profile-media").remove([uploadedAvatar]);
     console.error("[Looma] Falha ao atualizar profiles.", {
       userId: user.id,
       code: error.code,
@@ -122,6 +115,11 @@ export async function saveProfileDetails({
     throw new Error("Não foi possível salvar seu perfil. Tente novamente.");
   }
 
+  if (uploadedAvatar && profile?.avatar_url?.startsWith("storage:profile-media/")) {
+    await supabase.storage
+      .from("profile-media")
+      .remove([profile.avatar_url.slice("storage:profile-media/".length)]);
+  }
   return data as Profile;
 }
 

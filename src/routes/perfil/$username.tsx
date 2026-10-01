@@ -1,3 +1,5 @@
+import { PostMedia } from "@/components/looma/PostMedia";
+import type { PostMediaData } from "@/lib/media";
 import { useEffect, useState } from "react";
 import {
   BriefcaseBusiness,
@@ -38,7 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type PublicPost = {
+type PublicPost = PostMediaData & {
   id: string;
   content: string;
   kind: "post" | "work";
@@ -118,7 +120,9 @@ function PublicProfilePage() {
 
         const postsResult = await supabase
           .from("posts")
-          .select("id, content, kind, created_at")
+          .select(
+            "id, content, kind, created_at, media_path, media_type, media_size, media_duration",
+          )
           .eq("author_id", publicProfile.id)
           .eq("status", "published")
           .order("created_at", { ascending: false });
@@ -417,6 +421,7 @@ function PublicProfilePage() {
                   }).format(new Date(post.created_at))}
                 </time>
                 <p>{post.content}</p>
+                <PostMedia path={post.media_path} type={post.media_type} />
                 {post.kind === "work" ? (
                   <div className="feed-work-actions">
                     <span className="feed-work-badge">

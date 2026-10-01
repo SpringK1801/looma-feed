@@ -1,3 +1,11 @@
+import { MediaPicker } from "./MediaPicker";
+import { PostMedia } from "./PostMedia";
+import {
+  uploadPostMedia,
+  removePostMedia,
+  type PreparedMedia,
+  type PostMediaData,
+} from "@/lib/media";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -34,7 +42,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type FeedPost = {
+type FeedPost = PostMediaData & {
   id: string;
   author_id: string;
   content: string;
@@ -148,6 +156,9 @@ export function LoomaLanding({
   const [introVisible, setIntroVisible] = useState(() => !showSplash);
   const [introStage, setIntroStage] = useState<IntroStage>("logo");
   const [introSequenceDone, setIntroSequenceDone] = useState(() => !showSplash);
+  const [media, setMedia] = useState<PreparedMedia | null>(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaKey, setMediaKey] = useState(0);
   const [message, setMessage] = useState("");
   const [postKind, setPostKind] = useState<FeedPost["kind"]>("post");
   const [feedTab, setFeedTab] = useState<FeedTab>("for-you");
@@ -324,7 +335,9 @@ export function LoomaLanding({
 
       let query = supabase
         .from("posts")
-        .select("id, author_id, content, kind, likes_count, comments_count, created_at, updated_at")
+        .select(
+          "id, author_id, content, kind, likes_count, comments_count, created_at, updated_at, media_path, media_type, media_size, media_duration",
+        )
         .eq("status", "published")
         .order("created_at", { ascending: false })
         .limit(30);
@@ -531,7 +544,7 @@ export function LoomaLanding({
 
   async function publish() {
     const content = message.trim();
-    if (!content || publishing) return;
+    if (!content || publishing || mediaBusy) return;
     if (!user) {
       setComposerError("Entre com sua conta para publicar.");
       return;
@@ -551,13 +564,20 @@ export function LoomaLanding({
     const pendingMinimumTimer = new Promise<void>((resolve) => {
       window.setTimeout(resolve, POST_PENDING_MINIMUM_MS);
     });
+    let uploadedPath: string | null = null;
     try {
+      const attachment = await uploadPostMedia(user.id, media);
+      uploadedPath = attachment.media_path;
       const result = await getSupabaseBrowserClient()
         .from("posts")
-        .insert({ author_id: user.id, content, kind: postKind, status: "published" })
-        .select("id, author_id, content, kind, likes_count, comments_count, created_at, updated_at")
+        .insert({ author_id: user.id, content, kind: postKind, status: "published", ...attachment })
+        .select(
+          "id, author_id, content, kind, likes_count, comments_count, created_at, updated_at, media_path, media_type, media_size, media_duration",
+        )
         .single();
       if (result.error || !result.data) {
+        await removePostMedia(uploadedPath);
+        uploadedPath = null;
         setPosts((current) =>
           current.filter(
             (post) => !isPendingFeedPost(post) || post.client_id !== pendingPost.client_id,
@@ -567,6 +587,9 @@ export function LoomaLanding({
         return;
       }
 
+      uploadedPath = null;
+      setMedia(null);
+      setMediaKey((key) => key + 1);
       const [confirmedResult] = await Promise.all([Promise.resolve(result), pendingMinimumTimer]);
       const newPost = confirmedResult.data as FeedPost;
       setMessage("");
@@ -580,6 +603,7 @@ export function LoomaLanding({
       setRecentlyAddedPostId(newPost.id);
       setFeedTab("for-you");
     } catch (caught) {
+      await removePostMedia(uploadedPath);
       setPosts((current) =>
         current.filter(
           (post) => !isPendingFeedPost(post) || post.client_id !== pendingPost.client_id,
@@ -635,7 +659,9 @@ export function LoomaLanding({
         .update({ content, updated_at: new Date().toISOString() })
         .eq("id", post.id)
         .eq("author_id", user.id)
-        .select("id, author_id, content, kind, likes_count, comments_count, created_at, updated_at")
+        .select(
+          "id, author_id, content, kind, likes_count, comments_count, created_at, updated_at, media_path, media_type, media_size, media_duration",
+        )
         .single();
 
       if (result.error || !result.data) {
@@ -678,6 +704,7 @@ export function LoomaLanding({
         return;
       }
 
+      await removePostMedia(post.media_path);
       setRemovingPostId(post.id);
       setPostPendingDeletion(null);
       postRemovalTimerRef.current = window.setTimeout(() => {
@@ -1065,6 +1092,9 @@ export function LoomaLanding({
                             ) : (
                               <p>{post.content}</p>
                             )}
+                            {!isPending && (
+                              <PostMedia path={post.media_path} type={post.media_type} />
+                            )}
                             {!isPending && post.kind === "work" ? (
                               <div className="feed-work-actions">
                                 <span className="feed-work-badge">
@@ -1294,11 +1324,18 @@ export function LoomaLanding({
                     maxLength={300}
                     disabled={publishing}
                   />
+                  <MediaPicker
+                    key={mediaKey}
+                    value={media}
+                    onChange={setMedia}
+                    disabled={publishing}
+                    onBusyChange={setMediaBusy}
+                  />
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="publish-button"
-                      disabled={!message.trim() || publishing}
+                      disabled={!message.trim() || publishing || mediaBusy}
                       onClick={() => void publish()}
                     >
                       {publishing ? "Publicando…" : "Publicar"} <Send size={15} />
